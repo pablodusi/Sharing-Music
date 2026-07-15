@@ -1,0 +1,44 @@
+﻿# Dependencies
+node_modules/
+.venv/
+venv/
+.env/
+__pycache__/
+*.pyc
+
+# Build / output
+dist/
+build/
+out/
+.next/
+coverage/
+*.min.js
+*.min.css
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Logs and caches
+*.log
+.cache/
+.npm/
+.turbo/
+.parcel-cache/
+
+# Large media (adjust if you need these indexed)
+*.mp3
+*.wav
+*.flac
+*.mp4
+*.mov
+*.zip
+*.tar
+*.gz
