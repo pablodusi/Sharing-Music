@@ -1,0 +1,192 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoomRole {
+  OWNER
+  MODERATOR
+  LISTENER
+}
+
+enum MessageType {
+  TEXT
+  SYSTEM
+  VOICE
+}
+
+model User {
+  id          String   @id @default(cuid())
+  /// Auth0 subject when signed in; null for guests.
+  auth0Id     String?  @unique @map("auth0_id")
+  /// Client-generated guest id (cookie / localStorage); null for Auth0 users.
+  guestKey    String?  @unique @map("guest_key")
+  email       String?  @unique
+  username    String   @unique
+  displayName String   @map("display_name")
+  avatarUrl   String?  @map("avatar_url")
+  isGuest     Boolean  @default(false) @map("is_guest")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  ownedRooms          Room[]           @relation("RoomOwner")
+  roomMemberships     RoomMember[]
+  messages            Message[]
+  queueItems          QueueItem[]
+  queueVotes          QueueVote[]
+  startedPlayback     RoomPlayback[]   @relation("PlaybackStartedBy")
+  moderationActions   ModerationAction[] @relation("ModeratorActions")
+  notifications       Notification[]
+
+  @@map("users")
+}
+
+model Room {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  isPrivate   Boolean  @default(false) @map("is_private")
+  inviteCode  String?  @unique @map("invite_code")
+  ownerId     String   @map("owner_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  owner     User          @relation("RoomOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members   RoomMember[]
+  playback  RoomPlayback?
+  messages  Message[]
+  queue     QueueItem[]
+  votes     QueueVote[]
+
+  @@index([isPrivate, createdAt])
+  @@map("rooms")
+}
+
+model RoomMember {
+  id       String   @id @default(cuid())
+  roomId   String   @map("room_id")
+  userId   String   @map("user_id")
+  role     RoomRole @default(LISTENER)
+  joinedAt DateTime @default(now()) @map("joined_at")
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@index([userId])
+  @@map("room_members")
+}
+
+/// Currently playing track for the room (shared). Local volume is never stored here.
+model RoomPlayback {
+  id              String   @id @default(cuid())
+  roomId          String   @unique @map("room_id")
+  youtubeVideoId  String?  @map("youtube_video_id")
+  trackTitle      String?  @map("track_title")
+  trackArtist     String?  @map("track_artist")
+  trackAlbum      String?  @map("track_album")
+  durationMs      Int?     @map("duration_ms")
+  addedById       String?  @map("added_by_id")
+  positionMs      Int      @default(0) @map("position_ms")
+  isPlaying       Boolean  @default(false) @map("is_playing")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  room    Room  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  addedBy User? @relation("PlaybackStartedBy", fields: [addedById], references: [id], onDelete: SetNull)
+
+  @@map("room_playback")
+}
+
+model QueueItem {
+  id             String   @id @default(cuid())
+  roomId         String   @map("room_id")
+  youtubeVideoId String   @map("youtube_video_id")
+  title          String
+  artist         String
+  album          String   @default("YouTube")
+  durationMs     Int      @map("duration_ms")
+  addedById      String   @map("added_by_id")
+  /// Tie-breaker after votes (older first).
+  addedAt        DateTime @default(now()) @map("added_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  room    Room        @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  addedBy User        @relation(fields: [addedById], references: [id], onDelete: Cascade)
+  votes   QueueVote[]
+
+  @@index([roomId, addedAt])
+  @@index([roomId, youtubeVideoId])
+  @@map("queue_items")
+}
+
+/// One active vote per user per room (cast-or-move).
+model QueueVote {
+  id          String   @id @default(cuid())
+  roomId      String   @map("room_id")
+  queueItemId String   @map("queue_item_id")
+  voterId     String   @map("voter_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  room      Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  queueItem QueueItem @relation(fields: [queueItemId], references: [id], onDelete: Cascade)
+  voter     User      @relation(fields: [voterId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, voterId])
+  @@index([queueItemId])
+  @@map("queue_votes")
+}
+
+model Message {
+  id              String      @id @default(cuid())
+  roomId          String      @map("room_id")
+  /// Null for pure system events with no acting user (rare); usually set.
+  authorId        String?     @map("author_id")
+  content         String
+  type            MessageType @default(TEXT)
+  /// Public URL path for voice files, e.g. /uploads/voice/....webm — never base64.
+  audioUrl        String?     @map("audio_url")
+  audioDurationMs Int?        @map("audio_duration_ms")
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  room   Room  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([roomId, createdAt])
+  @@map("messages")
+}
+
+model ModerationAction {
+  id          String   @id @default(cuid())
+  roomId      String   @map("room_id")
+  moderatorId String   @map("moderator_id")
+  targetId    String   @map("target_id")
+  action      String
+  reason      String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  moderator User @relation("ModeratorActions", fields: [moderatorId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, createdAt])
+  @@map("moderation_actions")
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  type      String
+  title     String
+  body      String
+  payload   Json?
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}

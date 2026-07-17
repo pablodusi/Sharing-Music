@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.local
+*.log
+.turbo/
+
+# Voice uploads (MVP local disk)
+apps/api/uploads/
+
+# Prisma
+apps/api/prisma/migrations/**/migration_lock.toml
+
+# OS
+.DS_Store
+Thumbs.db

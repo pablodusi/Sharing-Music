@@ -1,0 +1,24 @@
+{
+  "name": "sharing-music",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "api:dev": "npm run start:dev -w api",
+    "api:build": "npm run build -w api",
+    "api:test": "npm run test -w api",
+    "db:up": "docker compose up -d postgres redis",
+    "db:down": "docker compose down",
+    "db:migrate": "npm run prisma:migrate -w api",
+    "db:studio": "npm run prisma:studio -w api",
+    "web:dev": "npm run dev -w web",
+    "web:build": "npm run build -w web",
+    "web:start": "npm run start -w web",
+    "smoke": "node scripts/smoke-check.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
