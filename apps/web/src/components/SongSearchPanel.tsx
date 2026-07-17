@@ -7,8 +7,16 @@ import {
   type AddBlockReason,
 } from "@/lib/queue";
 import { ROOM_RULES } from "@/lib/room-rules";
-import { youtubeThumbnailUrl } from "@/lib/youtube";
+import {
+  createDebouncedSearchRunner,
+  fetchSongSearch,
+  isSearchableQuery,
+  QUOTA_EXCEEDED_MESSAGE,
+  SEARCH_DEBOUNCE_MS,
+  songSearchCache,
+} from "@/lib/song-search-client";
 import type { SongSearchResult } from "@/lib/song-search";
+import { youtubeThumbnailUrl } from "@/lib/youtube";
 import type { Track } from "@/lib/types";
 
 const MAX_VISIBLE_RESULTS = 8;
@@ -19,13 +27,6 @@ type SongSearchPanelProps = {
   /** Null when the user can still add; otherwise why they are capped. */
   addBlockReason: AddBlockReason | null;
   onSelect: (track: Track) => void;
-};
-
-type SearchResponse = {
-  results: SongSearchResult[];
-  source: "youtube" | "none" | "error";
-  error: string | null;
-  message: string | null;
 };
 
 function queueLimitHint(): string {
@@ -62,7 +63,7 @@ export function SongSearchPanel({
     : null;
 
   const trimmedQuery = query.trim();
-  const canSearch = trimmedQuery.length >= 2;
+  const canSearch = isSearchableQuery(trimmedQuery);
   const visibleResults = results.slice(0, MAX_VISIBLE_RESULTS);
   const showEmptyState =
     canSearch && !loading && !apiError && visibleResults.length === 0;
@@ -71,35 +72,48 @@ export function SongSearchPanel({
     canSearch &&
     (loading || apiError !== null || visibleResults.length > 0 || showEmptyState);
 
+  const runnerRef = useRef(
+    createDebouncedSearchRunner(SEARCH_DEBOUNCE_MS),
+  );
+
   useEffect(() => {
+    const runner = runnerRef.current;
+
     if (!canSearch) {
+      runner.cancel();
       setResults([]);
       setSource("none");
       setHint(null);
       setApiError(null);
       setLoading(false);
       setPanelOpen(false);
-      return;
+      return () => {
+        runner.cancel();
+      };
     }
 
     setPanelOpen(true);
+    setLoading(true);
 
-    const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
-      setLoading(true);
+    runner.schedule(async (signal) => {
       try {
-        const response = await fetch(
-          `/api/songs/search?q=${encodeURIComponent(trimmedQuery)}`,
-          { signal: controller.signal },
-        );
-        const data = (await response.json()) as SearchResponse;
+        const data = await fetchSongSearch(trimmedQuery, {
+          signal,
+          cache: songSearchCache,
+        });
 
-        if (!response.ok || data.source === "error") {
+        if (signal.aborted) {
+          return;
+        }
+
+        if (data.source === "error") {
           setResults([]);
           setSource("error");
           setApiError(
-            data.message ??
-              "YouTube search is unavailable. Configure YOUTUBE_API_KEY.",
+            data.error === "quota_exceeded"
+              ? (data.message ?? QUOTA_EXCEEDED_MESSAGE)
+              : (data.message ??
+                  "YouTube search is unavailable. Configure YOUTUBE_API_KEY."),
           );
           setHint(null);
           return;
@@ -110,7 +124,7 @@ export function SongSearchPanel({
         setApiError(null);
         setHint(data.message);
       } catch (error) {
-        if ((error as Error).name === "AbortError") {
+        if ((error as Error).name === "AbortError" || signal.aborted) {
           return;
         }
         setResults([]);
@@ -118,13 +132,14 @@ export function SongSearchPanel({
         setApiError("Search failed. Try again.");
         setHint(null);
       } finally {
-        setLoading(false);
+        if (!signal.aborted) {
+          setLoading(false);
+        }
       }
-    }, 300);
+    });
 
     return () => {
-      controller.abort();
-      window.clearTimeout(timer);
+      runner.cancel();
     };
   }, [canSearch, trimmedQuery]);
 

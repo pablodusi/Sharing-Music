@@ -1,4 +1,10 @@
 import { NextResponse } from "next/server";
+import {
+  isYouTubeQuotaExceeded,
+  MIN_SEARCH_QUERY_LENGTH,
+  QUOTA_EXCEEDED_MESSAGE,
+  youtubeSearchErrorResponse,
+} from "@/lib/song-search-client";
 import type { SongSearchResult } from "@/lib/song-search";
 import type { Track } from "@/lib/types";
 
@@ -48,12 +54,12 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const query = (searchParams.get("q") ?? "").trim();
 
-  if (query.length < 2) {
+  if (query.length < MIN_SEARCH_QUERY_LENGTH) {
     return NextResponse.json({
       results: [] as SongSearchResult[],
       source: "none",
       error: null,
-      message: "Type at least 2 characters.",
+      message: `Type at least ${MIN_SEARCH_QUERY_LENGTH} characters.`,
     });
   }
 
@@ -91,16 +97,13 @@ export async function GET(request: Request) {
     if (!searchResponse.ok) {
       const body = await searchResponse.text();
       console.error("YouTube search failed", searchResponse.status, body);
-      return NextResponse.json(
-        {
-          results: [] as SongSearchResult[],
-          source: "error",
-          error: "youtube_api_error",
-          message:
-            "YouTube search failed. Check that your API key is valid and the YouTube Data API v3 is enabled.",
-        },
-        { status: 502 },
+      const errorPayload = youtubeSearchErrorResponse(
+        searchResponse.status,
+        body,
       );
+      return NextResponse.json(errorPayload, {
+        status: errorPayload.error === "quota_exceeded" ? 429 : 502,
+      });
     }
 
     const searchData = (await searchResponse.json()) as {
@@ -131,6 +134,17 @@ export async function GET(request: Request) {
     if (!detailsResponse.ok) {
       const body = await detailsResponse.text();
       console.error("YouTube videos.list failed", detailsResponse.status, body);
+      if (isYouTubeQuotaExceeded(detailsResponse.status, body)) {
+        return NextResponse.json(
+          {
+            results: [] as SongSearchResult[],
+            source: "error",
+            error: "quota_exceeded",
+            message: QUOTA_EXCEEDED_MESSAGE,
+          },
+          { status: 429 },
+        );
+      }
       return NextResponse.json(
         {
           results: [] as SongSearchResult[],
