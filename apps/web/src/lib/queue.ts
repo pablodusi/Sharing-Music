@@ -102,6 +102,9 @@ export function advanceToVotedTrack(
     currentTrack: {
       track: winner.track,
       addedBy: winner.addedBy,
+      positionMs: 0,
+      isPlaying: true,
+      updatedAt: new Date().toISOString(),
     },
     queue: remaining,
     voteState: { myVoteTrackId: null },
